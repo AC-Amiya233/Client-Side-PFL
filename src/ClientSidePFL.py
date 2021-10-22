@@ -99,10 +99,10 @@ if __name__ == '__main__':
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 10
+    global_epoch = 20
     local_epoch = 1
-    active_local_sv = False
-    active_local_loss = True
+    active_local_sv = True
+    active_local_loss = False
     # R = 1
     R = 3 * clients
     # training needs:
@@ -219,7 +219,6 @@ if __name__ == '__main__':
                         evaluated_sv = []
                         weights_queue = []
                         node_queue = []
-                        # TODO MARKER - INIT ACCURACY
                         acc_history = [0.]
                         for member in item:
                             node_queue.append(member)
@@ -280,35 +279,24 @@ if __name__ == '__main__':
                     logging.info('[ICLR] Start Loss Computation')
                     local_only_acc = local_update_acc_dict[idx][-1]
                     local_only_loss = local_update_loss_dict[idx][-1]
+                    local_only_params = usr_models[idx].parameters()
                     logging.info('[ICLR] {} Only with Accuracy {}% & Loss {}'.format(idx, local_only_acc * 100, local_only_loss))
 
                     # calculate weights
                     weights = []
-
-                    loss_diff = []
-                    loss_diff.append(local_update_loss_dict[idx][-1])
-                    models_diff = [usr_models[idx].state_dict() for i in range(clients)]
+                    models_diff_list = []
                     for request in range(clients):
+                        params_diff = []
+                        params_diff = torch.Tensor(params_diff)
+                        models_diff = []
                         if request != idx:
-                            cur_loss, cur_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
-                            logging.info('[ICLR-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, cur_acc * 100, cur_loss))
-                            loss_diff.append(loss_diff[0] - cur_loss)
-                            for key in models_diff[0].keys():
-                                models_diff[request][key] = models_diff[0][key] - usr_models[request].state_dict()[key]
-
-
-                    loss_diff = loss_diff[1:]
-                    norm_models_diff = []
-                    for request in range(1, clients):
-                        plant = []
-                        for key in models_diff[0].keys():
-                            plant += torch.reshape(models_diff[request][key], (-1,)).detach().numpy().tolist()
-                        norm_plant = np.linalg.norm(plant)
-                        norm_models_diff.append(norm_plant)
-                        logging.info('[ICLR-EVAL] {} on {} dataset with models different {}'.format(request, idx, norm_plant))
-
-                    for item in range(0, clients - 1):
-                        weights.append(loss_diff[item] / norm_models_diff[item])
+                            request_loss, request_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
+                            logging.info('[ICLR-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
+                            for param_cur, param_request in zip(local_only_params, usr_models[request].parameters()):
+                                torch.cat((params_diff, ((param_cur - param_request).view(-1))), 0)
+                                models_diff.append(param_cur - param_request)
+                            weights.append((local_only_loss - request_loss) / torch.norm(params_diff) + 1e-5)
+                        models_diff_list.append(models_diff)
 
                     # exclude negative value
                     for item in range(len(weights)):
@@ -316,19 +304,19 @@ if __name__ == '__main__':
                     # normalize weights
                     base = sum(weights)
                     if base == 0:
-                        loss_update_models_dict[idx].append(usr_models[idx].state_dict())
+                        # loss_update_models_dict[idx].append(usr_models[idx].state_dict())
+                        pass
                     else:
                         for item in range(len(weights)):
                             weights[item] = weights[item] / base
 
                         # update local model
-                        local_update_model = usr_models[idx].state_dict()
+                        # local_update_model = usr_models[idx].state_dict()
                         for request in range(0, clients - 1):
-                            if request != idx:
-                                for key in local_update_model.keys():
-                                    local_update_model[key] += weights[request] * models_diff[request][key]
-                        usr_models[idx].load_state_dict(local_update_model)
-                        loss_update_models_dict[idx].append(local_update_model)
+                            for param, param_request in zip(local_only_params, models_diff_list[request]):
+                                param.data = param_request.data.clone() * weights[request]
+                        # usr_models[idx].load_state_dict(local_update_model)
+                        # loss_update_models_dict[idx].append(local_update_model)
 
                     iclar_loss, iclr_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                     logging.critical('[ICLR - EVAL] ICLR Accuracy {}% Loss {}'.format(iclr_acc * 100, iclar_loss))
