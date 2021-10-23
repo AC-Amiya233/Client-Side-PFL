@@ -90,8 +90,7 @@ if __name__ == '__main__':
     logging.info('Client Side PFL Training Starts')
 
     # configs:
-    task_repeat_time = 30
-
+    task_repeat_time = 1
     clients = 5
     batch_size = 40
     select = 5
@@ -100,10 +99,10 @@ if __name__ == '__main__':
     criteria = torch.nn.CrossEntropyLoss()
     global_epoch = 15
     local_epoch = 5
-    active_local_sv = False
+    active_local_sv = True
     active_local_loss = False
     # R = 1
-    R = 5 * clients
+    R = 3 * clients
 
     multi_task_avg_accuracy_list = [0 for i in range(task_repeat_time)]
 
@@ -236,17 +235,33 @@ if __name__ == '__main__':
                         logging.critical('[SV] Eval SV: {}'.format(evaluated_sv))
                         # calculate weights based on sv
 
+                        # calculate model differences
+                        # TODO NEW EVAL METHOD
+                        models_difference = []
+                        for request in range(clients):
+                            params_diff = []
+                            params_diff = torch.Tensor(params_diff)
+                            if request != idx:
+                                for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
+                                    params_diff = torch.cat((params_diff, ((param_cur - param_request).view(-1))), 0)
+                                    logging.info('[SV] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
+                                models_difference.append(torch.norm(params_diff).detach().numpy())
+                            else:
+                                models_difference.append(1)
+                        logging.info('[SV - EVAL] Model Difference {}'.format(models_difference))
+
                         # only use positive sv clients
                         positive_idx = []
                         positive_sv = []
                         for i in range(clients):
                             if evaluated_sv[i] > 0:
                                 positive_idx.append(i)
-                                positive_sv.append(evaluated_sv[i])
+                                positive_sv.append(evaluated_sv[i] / models_difference[i])
+                                logging.info('[SV/MODELS - EVAL] New Strategy Calculation {} / {} = {}'.format(evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
                         # norm
                         positive_sv = positive_sv / sum(positive_sv)
-                        logging.info('[FedFomo] Positive Index {}'.format(positive_idx))
-                        logging.info('[FedFomo] Positive Weights {}'.format(positive_sv))
+                        logging.info('[SV] Positive Index {}'.format(positive_idx))
+                        logging.info('[SV] Positive Weights {}'.format(positive_sv))
 
                         weights = []
                         for i in range(clients):
@@ -254,15 +269,15 @@ if __name__ == '__main__':
                                 weights.append(positive_sv[positive_idx.index(i)])
                             else:
                                 weights.append(0)
-                        logging.critical('[FedFomo] Weights {}'.format(weights))
+                        logging.critical('[SV] Weights {}'.format(weights))
 
                         base = copy.deepcopy(usr_models[idx].state_dict())
                         for key in base.keys():
                             if idx in positive_idx:
-                                logging.critical('[FedFomo] Index {} in its own choose with weights {}(idx {})'.format(idx, weights[idx], idx))
+                                logging.critical('[SV] Index {} in its own choose with weights {}(idx {})'.format(idx, weights[idx], idx))
                                 base[key] = weights[idx] * base[key]
                             else:
-                                logging.critical('[FedFomo] Index {} not in its own choose'.format(idx))
+                                logging.critical('[SV] Index {} not in its own choose'.format(idx))
                                 base[key] = 0 * base[key]
 
                         for key in base.keys():
@@ -274,7 +289,7 @@ if __name__ == '__main__':
 
                         usr_models[idx].load_state_dict(base)
                         fomo_loss, fomo_acc = evaluate_model(usr_models[idx], usr_dataset_loaders[idx])
-                        logging.critical('[FedFomo] New Model Local Accuracy {}%'.format(fomo_acc * 100))
+                        logging.critical('[SV] New Model Local Accuracy {}%'.format(fomo_acc * 100))
                         loss_update_acc_dict[idx].append(fomo_acc)
 
                     if active_local_loss:
@@ -289,15 +304,17 @@ if __name__ == '__main__':
                         models_diff_list = []
                         for request in range(clients):
                             params_diff = []
-                            params_diff = torch.Tensor(params_diff)
+                            tensor_diff = torch.Tensor(params_diff)
                             models_diff = []
                             if request != idx:
                                 request_loss, request_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
                                 logging.info('[ICLR-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
-                                for param_cur, param_request in zip(local_only_params, usr_models[request].parameters()):
-                                    torch.cat((params_diff, ((param_cur - param_request).view(-1))), 0)
+                                for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
+                                    logging.info('[ICLR-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
+                                    tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
                                     models_diff.append(param_cur - param_request)
-                                weights.append((local_only_loss - request_loss) / torch.norm(params_diff) + 1e-5)
+                                logging.info('[ICLR-EVAL] {} compare to {} with difference {}'.format(idx, request, torch.norm(tensor_diff), 0))
+                                weights.append((local_only_loss - request_loss) / (torch.norm(tensor_diff) + 1e-5))
                             models_diff_list.append(models_diff)
 
                         # exclude negative value
