@@ -101,7 +101,7 @@ if __name__ == '__main__':
     global_epoch = 15
     local_epoch = 5
     active_local_sv = False
-    active_local_loss = True
+    active_local_loss = False
     # R = 1
     R = 5 * clients
 
@@ -326,9 +326,11 @@ if __name__ == '__main__':
 
         if active_local_sv or active_local_loss:
             record = [loss_update_acc_dict[i][-1] for i in range(clients)]
+            logging.critical('Task {} Avg Accuracy {}'.format(task, record))
             multi_task_avg_accuracy_list[task] = np.mean(record)
         else:
             record = [local_update_acc_dict[i][-1] for i in range(clients)]
+            logging.critical('Task {} Avg Accuracy {}'.format(task, record))
             multi_task_avg_accuracy_list[task] = np.mean(record)
 
         if clients % 2 == 0:
@@ -392,5 +394,5 @@ if __name__ == '__main__':
     ax.set_ylabel('Accuracy')
     plt.show()
 
-    with open('./{}_exper1.csv'.format(time.ctime(time.time()))):
+    with open('{}_exper2.csv'.format(time.ctime(time.time())), 'w') as f:
         [f.write('{0},{1}\n'.format(key, '{}'.format(multi_task_avg_accuracy_list).strip('[]'))) for key in range(task_repeat_time)]
