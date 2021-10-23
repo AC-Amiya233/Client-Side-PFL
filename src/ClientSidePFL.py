@@ -13,10 +13,6 @@ from dataset import *
 from utils import *
 from models import *
 
-def reset_random_seed():
-    np.random.seed(0)
-    # np.random.seed(int(time.time()))
-
 class Server():
     def __init__(self, clients):
         self.usr_idx = [i for i in range(clients)]
@@ -100,12 +96,12 @@ if __name__ == '__main__':
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 5
+    global_epoch = 15
     local_epoch = 5
-    active_local_sv = True
+    active_local_sv = False
     active_local_loss = False
     # R = 1
-    R = 3 * clients
+    R = 5 * clients
     # training needs:
     usr_idx = [i for i in range(clients)]
     usr_models = [CNNMnist() for i in range(clients)]
@@ -143,7 +139,6 @@ if __name__ == '__main__':
     for global_round in range(1, global_epoch + 1):
         usr_states = [0 for i in range(clients)]
         # 1 - Select users
-        reset_random_seed()
         selected = random.sample(usr_idx, select)
         logging.info('Global Round {} - Participants {} ({}/{})'.format(global_round, selected, len(selected), clients))
         for idx in selected:
@@ -205,7 +200,6 @@ if __name__ == '__main__':
                     logging.info('[SV] {} Only with Accuracy {}%'.format(idx, local_only_acc * 100))
                     perm_list = []
                     perm_list += list(itertools.permutations(np.arange(clients), clients))
-                    # reset_random_seed()
                     r_perm_index = np.random.choice([i for i in range(len(perm_list))], R, replace=False)
                     r_perm = []
                     for i in r_perm_index:
@@ -248,19 +242,22 @@ if __name__ == '__main__':
                     logging.info('[FedFomo] Positive Index {}'.format(positive_idx))
                     logging.info('[FedFomo] Positive Weights {}'.format(positive_sv))
 
-                    # TODO norm
                     weights = []
                     for i in range(clients):
                         if i in positive_idx:
                             weights.append(positive_sv[positive_idx.index(i)])
-                        else :
+                        else:
                             weights.append(0)
                     logging.critical('[FedFomo] Weights {}'.format(weights))
 
+
+
+                    # TODO BUGS
                     base = copy.deepcopy(usr_models[idx].state_dict())
                     for key in base.keys():
                         if idx in positive_idx:
-                            base[key] = weights[positive_idx.index(idx)] * base[key]
+                            logging.critical('[FedFomo] Index {} in its own choose with weights {}(idx {})'.format(idx, weights[idx], idx))
+                            base[key] = weights[idx] * base[key]
                         else:
                             logging.critical('[FedFomo] Index {} not in its own choose'.format(idx))
                             base[key] = 0 * base[key]
@@ -271,6 +268,7 @@ if __name__ == '__main__':
                             state = usr_models[cur].state_dict()
                             if cur != idx:
                                 base[key] += w * state[key]
+
                     usr_models[idx].load_state_dict(base)
                     fomo_loss, fomo_acc = evaluate_model(usr_models[idx], usr_dataset_loaders[idx])
                     logging.critical('[FedFomo] New Model Local Accuracy {}%'.format(fomo_acc * 100))
@@ -322,158 +320,49 @@ if __name__ == '__main__':
                     iclar_loss, iclr_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                     logging.critical('[ICLR - EVAL] ICLR Accuracy {}% Loss {}'.format(iclr_acc * 100, iclar_loss))
                     loss_update_acc_dict[idx].append(iclr_acc)
+    draw_clients = clients / 2
+    for i in range(clients):
 
+        fig1 = plt.figure('Fig', figsize=(20, 10))
 
-    fig1 = plt.figure('Fig 1', figsize=(20, 10))
-    ax1 = fig1.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[0], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[0], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 0')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
+        ax1 = fig1.add_subplot(1, 2, 1)
+        ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[0], color='red',
+                 linestyle='--',
+                 marker='x')
+        if active_local_loss or active_local_sv:
+            ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[0], color='blue',
+                     linestyle='--',
+                     marker='x')
+        ax1.set_title('Client {}'.format(i / 2))
+        ax1.set_xlabel('Round')
+        ax1.set_ylabel('Accuracy')
 
-    ax2 = fig1.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[1], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[1], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 1')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
+        ax2 = fig1.add_subplot(1, 2, 2)
+        ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[1], color='red',
+                 linestyle='--',
+                 marker='x')
+        if active_local_loss or active_local_sv:
+            ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[1], color='blue',
+                     linestyle='--',
+                     marker='x')
+        ax2.set_title('Client {}'.format(i / 2 + 1))
+        ax2.set_xlabel('Round')
+        ax2.set_ylabel('Accuracy')
 
-    fig2 = plt.figure('Fig 2', figsize=(20, 10))
-    ax1 = fig2.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[2], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[2], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 2')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-
-    ax2 = fig2.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[3], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[3], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 3')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
-
-    fig3 = plt.figure('Fig 3', figsize=(20, 10))
-    ax1 = fig3.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[4], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[4], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 4')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-
-    ax2 = fig3.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[5], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[5], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 5')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
-
-    fig4 = plt.figure('Fig 4', figsize=(20, 10))
-    ax1 = fig4.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[6], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[6], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 6')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-
-    ax2 = fig4.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[7], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[7], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 7')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
-
-    fig5 = plt.figure('Fig 5', figsize=(20, 10))
-    ax1 = fig5.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[8], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[8], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 8')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-
-    ax2 = fig5.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[9], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[9], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 9')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
-
-    '''
-    
-    fig6 = plt.figure('Fig 6', figsize=(20, 10))
-    ax1 = fig6.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[10], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[10], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 10')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-
-    ax2 = fig6.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[11], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[11], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 11')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
-
-    fig7 = plt.figure('Fig 7', figsize=(20, 10))
-    ax1 = fig7.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[12], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[12], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 12')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-
-    ax2 = fig7.add_subplot(1, 2, 2)
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[13], color='red', linestyle='--',
-             marker='x')
-    ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[13], color='blue', linestyle='--',
-             marker='x')
-    ax2.set_title('Client 13')
-    ax2.set_xlabel('Round')
-    ax2.set_ylabel('Accuracy')
-
-    fig8 = plt.figure('Fig 8', figsize=(20, 10))
-    ax1 = fig8.add_subplot(1, 2, 1)
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[14], color='red', linestyle='--',
-             marker='x')
-    ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[14], color='blue', linestyle='--',
-             marker='x')
-    ax1.set_title('Client 14')
-    ax1.set_xlabel('Round')
-    ax1.set_ylabel('Accuracy')
-    
-    '''
     plt.show()
 
-    with open('{}.csv'.format('iclr_update_accuracy'), 'w') as f:
-        [f.write('{0},{1}\n'.format(key, value)) for key, value in loss_update_acc_dict.items()]
+    if active_local_sv:
+        with open('{}.csv'.format('sv_{}_update_accuracy'.format(clients)), 'w') as f:
+            [f.write('{0},{1}\n'.format(key, value)) for key, value in loss_update_acc_dict.items()]
 
-    with open('{}.csv'.format('iclr_local_update_accuracy'), 'w') as f:
-        [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
+        with open('{}.csv'.format('sv_{}_local_update_accuracy'.format(clients)), 'w') as f:
+            [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
+    elif active_local_loss:
+        with open('{}.csv'.format('iclr_{}_update_accuracy'.format(clients)), 'w') as f:
+            [f.write('{0},{1}\n'.format(key, value)) for key, value in loss_update_acc_dict.items()]
+
+        with open('{}.csv'.format('iclr_{}_local_update_accuracy'.format(clients)), 'w') as f:
+            [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
+    else:
+        with open('{}.csv'.format('pure_local_{}_update_accuracy'.format(clients)), 'w') as f:
+            [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
