@@ -90,18 +90,23 @@ if __name__ == '__main__':
     logging.info('Client Side PFL Training Starts')
 
     # configs:
-    clients = 10
+    task_repeat_time = 30
+
+    clients = 5
     batch_size = 40
-    select = 10
+    select = 5
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
     global_epoch = 15
     local_epoch = 5
     active_local_sv = False
-    active_local_loss = False
+    active_local_loss = True
     # R = 1
     R = 5 * clients
+
+
+
     # training needs:
     usr_idx = [i for i in range(clients)]
     usr_models = [CNNMnist() for i in range(clients)]
@@ -320,32 +325,38 @@ if __name__ == '__main__':
                     iclar_loss, iclr_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                     logging.critical('[ICLR - EVAL] ICLR Accuracy {}% Loss {}'.format(iclr_acc * 100, iclar_loss))
                     loss_update_acc_dict[idx].append(iclr_acc)
-    draw_clients = clients / 2
-    for i in range(clients):
 
-        fig1 = plt.figure('Fig', figsize=(20, 10))
-
-        ax1 = fig1.add_subplot(1, 2, 1)
-        ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[0], color='red',
+    if clients % 2 == 0:
+        draw_clients = clients // 2
+    else:
+        draw_clients = clients // 2 + 1
+    figs = [plt.figure('Fig {}'.format(i), figsize=(20, 10)) for i in range(draw_clients)]
+    for i in range(draw_clients):
+        fig = figs[i]
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[i * 2], color='red',
                  linestyle='--',
                  marker='x')
         if active_local_loss or active_local_sv:
-            ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[0], color='blue',
+            ax1.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[i * 2], color='blue',
                      linestyle='--',
                      marker='x')
-        ax1.set_title('Client {}'.format(i / 2))
+        ax1.set_title('Client {}'.format(i * 2))
         ax1.set_xlabel('Round')
         ax1.set_ylabel('Accuracy')
 
-        ax2 = fig1.add_subplot(1, 2, 2)
-        ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[1], color='red',
+        if i == draw_clients - 1 and clients % 2 != 0:
+            break
+
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), local_update_acc_dict[i * 2 + 1], color='red',
                  linestyle='--',
                  marker='x')
         if active_local_loss or active_local_sv:
-            ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[1], color='blue',
+            ax2.plot(np.arange(1, global_epoch + 1).astype(dtype=np.str), loss_update_acc_dict[i * 2 + 1], color='blue',
                      linestyle='--',
                      marker='x')
-        ax2.set_title('Client {}'.format(i / 2 + 1))
+        ax2.set_title('Client {}'.format(i * 2 + 1))
         ax2.set_xlabel('Round')
         ax2.set_ylabel('Accuracy')
 
@@ -353,16 +364,16 @@ if __name__ == '__main__':
 
     if active_local_sv:
         with open('{}.csv'.format('sv_{}_update_accuracy'.format(clients)), 'w') as f:
-            [f.write('{0},{1}\n'.format(key, value)) for key, value in loss_update_acc_dict.items()]
+            [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in loss_update_acc_dict.items()]
 
         with open('{}.csv'.format('sv_{}_local_update_accuracy'.format(clients)), 'w') as f:
-            [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
+            [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in local_update_acc_dict.items()]
     elif active_local_loss:
         with open('{}.csv'.format('iclr_{}_update_accuracy'.format(clients)), 'w') as f:
-            [f.write('{0},{1}\n'.format(key, value)) for key, value in loss_update_acc_dict.items()]
+            [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in loss_update_acc_dict.items()]
 
         with open('{}.csv'.format('iclr_{}_local_update_accuracy'.format(clients)), 'w') as f:
-            [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
+            [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in local_update_acc_dict.items()]
     else:
         with open('{}.csv'.format('pure_local_{}_update_accuracy'.format(clients)), 'w') as f:
-            [f.write('{0},{1}\n'.format(key, value)) for key, value in local_update_acc_dict.items()]
+            [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in local_update_acc_dict.items()]
