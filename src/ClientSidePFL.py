@@ -86,7 +86,7 @@ def evaluate_model(model, test_loader):
 
 if __name__ == '__main__':
     set_logger()
-    set_seed(0)
+    set_seed(8)
     logging.info('Client Side PFL Training Starts')
 
     # configs:
@@ -120,9 +120,10 @@ if __name__ == '__main__':
         usr_states = [0 for i in range(clients)]
         usr_participate = [i for i in range(clients)]
         usr_participate_counter = [0 for i in range(clients)]
-        usr_optimizers = [torch.optim.SGD(
-                usr_models[i].parameters(), lr=5e-3, momentum=.9, weight_decay=5e-5
-            ) for i in range(clients)]
+        # usr_optimizers = [torch.optim.SGD(
+        #         usr_models[i].parameters(), lr=0.01, momentum=.9, weight_decay=5e-5
+        #     ) for i in range(clients)]
+        usr_optimizers = [torch.optim.Adam(usr_models[i].parameters(), lr=0.01) for i in range(clients)]
         # logging.info(usr_optimizers)
         usr_dataset_loaders, usr_val_loaders, usr_test_loaders = gen_random_loaders(data, path, clients, 40, 2)
         # usr_dataset_loaders, test_loader = gen_dataloaders_with_majority(data, path, clients, 40)
@@ -271,8 +272,9 @@ if __name__ == '__main__':
                         for i in range(clients):
                             if evaluated_sv[i] > 0 and i != idx:
                                 positive_idx.append(i)
-                                positive_sv.append(evaluated_sv[i])
-                                # positive_sv.append(evaluated_sv[i] / models_difference[i])
+                                # positive_sv.append(evaluated_sv[i])
+                                logging.info('[SV/MODELS] Request {} ==> {} / {} = {}'.format(i, evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
+                                positive_sv.append(evaluated_sv[i] / models_difference[i])
                                 # logging.info('[SV/MODELS - EVAL] New Strategy Calculation {} / {} = {}'.format(evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
                         # norm
                         positive_sv = positive_sv / sum(positive_sv)
@@ -289,7 +291,10 @@ if __name__ == '__main__':
 
                         for request in range(clients):
                             for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
-                                param.data += param_request.data.clone() * weights[request]
+                                logging.info('[SV-AGG] idx({}) <-----> req({}): diff: {} * weight {}'.format(
+                                    torch.norm(param.data.clone()), torch.norm(param_request.clone()),
+                                    torch.norm(param_request.data.clone() - param.data.clone()), weights[request]))
+                                param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
                         fomo_loss, fomo_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                         logging.critical('[SV] New Model Local Accuracy {}%'.format(fomo_acc * 100))
                         loss_update_acc_dict[idx].append(fomo_acc)
@@ -335,7 +340,7 @@ if __name__ == '__main__':
                             # local_update_model = usr_models[idx].state_dict()
                             for request in range(0, clients - 1):
                                 for param, param_request in zip(usr_models[idx].parameters(), models_diff_list[request]):
-                                    param.data += param_request.data.clone() * weights[request]
+                                    param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
                             # usr_models[idx].load_state_dict(local_update_model)
                             # loss_update_models_dict[idx].append(local_update_model)
 
