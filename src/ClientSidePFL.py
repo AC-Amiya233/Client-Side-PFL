@@ -94,8 +94,8 @@ if __name__ == '__main__':
     # configs:
     task_repeat_time = 1
     # participant
-    clients = 15
-    select = 15
+    clients = 10
+    select = 10
     download = 5
     exploit = 4
     explore = 1
@@ -103,11 +103,11 @@ if __name__ == '__main__':
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 5
+    global_epoch = 1
     local_epoch = 5
     batch_size = 40
     # SV for personalization
-    active_local_sv = False
+    active_local_sv = True
     sv_eval_method = 'acc'
 
     # FedFomo for personalization
@@ -288,24 +288,28 @@ if __name__ == '__main__':
                         positive_idx = []
                         positive_sv = []
                         for i in range(clients):
-                            if evaluated_sv[i] > 0 and i != idx:
+                            if evaluated_sv[i] > 0:
                                 positive_idx.append(i)
                                 # positive_sv.append(evaluated_sv[i])
                                 logging.info('[SV/MODELS] Request {} ==> {} / {} = {}'.format(i, evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
                                 positive_sv.append(evaluated_sv[i] / models_difference[i])
                                 # logging.info('[SV/MODELS - EVAL] New Strategy Calculation {} / {} = {}'.format(evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
+
                         # norm
                         positive_sv = positive_sv / sum(positive_sv)
                         logging.info('[SV] Positive Index exclude idx itself{}'.format(positive_idx))
                         logging.info('[SV] Positive Weights {} exclude idx itself'.format(positive_sv))
 
+                        free_space = 1.0 - positive_sv[positive_idx.index(idx)]
+                        logging.info('[SV] Owner {] contributes {}'.format(idx, free_space))
+
                         weights = []
                         for i in range(clients):
-                            if i in positive_idx:
-                                weights.append(positive_sv[positive_idx.index(i)])
+                            if i in positive_idx and i != idx:
+                                weights.append(free_space * positive_sv[positive_idx.index(i)])
                             else:
                                 weights.append(0)
-                        logging.critical('[SV] Weights {}'.format(weights))
+                        logging.critical('[SV] {} Allocates Weights {}'.format(idx, weights))
 
                         for request in range(clients):
                             for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
