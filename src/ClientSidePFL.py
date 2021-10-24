@@ -1,6 +1,8 @@
 import copy
+import heapq
 import itertools
 import logging
+import random
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -92,17 +94,20 @@ if __name__ == '__main__':
     # configs:
     task_repeat_time = 1
     # participant
-    clients = 10
-    select = 10
+    clients = 15
+    select = 15
+    download = 5
+    exploit = 4
+    explore = 1
     #dataset
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 15
+    global_epoch = 5
     local_epoch = 5
     batch_size = 40
     # SV for personalization
-    active_local_sv = True
+    active_local_sv = False
     sv_eval_method = 'acc'
 
     # FedFomo for personalization
@@ -115,6 +120,8 @@ if __name__ == '__main__':
 
     for task in range(task_repeat_time):
         # training needs:
+        prob_download_dict = {idx: [float('-inf') if i == idx else 0 for i in range(clients)] for idx in range(clients)}
+
         usr_idx = [i for i in range(clients)]
         usr_models = [CNNMnist() for i in range(clients)]
         usr_states = [0 for i in range(clients)]
@@ -211,6 +218,17 @@ if __name__ == '__main__':
                         logging.info('[SV] Start SV Computation')
                         local_only_acc = local_update_acc_dict[idx][-1]
                         logging.info('[SV] {} Only with Accuracy {}%'.format(idx, local_only_acc * 100))
+
+                        # compute probs:
+                        downloaded_usrs = []
+                        topk_idx = heapq.nlargest(exploit, range(len(prob_download_dict[idx])), prob_download_dict[idx].__getitem__)
+                        downloaded_usrs += topk_idx
+                        while len(downloaded_usrs) != download:
+                            ch = random.choice(range(clients))
+                            if ch not in downloaded_usrs and ch != idx:
+                                downloaded_usrs.append(ch)
+                        logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
+
                         perm_list = []
                         perm_list += list(itertools.permutations(np.arange(clients), clients))
                         r_perm_index = np.random.choice([i for i in range(len(perm_list))], R, replace=False)
@@ -303,13 +321,22 @@ if __name__ == '__main__':
                         logging.info('[ICLR] Start Loss Computation')
                         local_only_acc = local_update_acc_dict[idx][-1]
                         local_only_loss = local_update_loss_dict[idx][-1]
-                        local_only_params = usr_models[idx].parameters()
                         logging.info('[ICLR] {} Only with Accuracy {}% & Loss {}'.format(idx, local_only_acc * 100, local_only_loss))
+
+                        # compute probs:
+                        downloaded_usrs = []
+                        topk_idx = heapq.nlargest(exploit, range(len(prob_download_dict[idx])), prob_download_dict[idx].__getitem__)
+                        downloaded_usrs += topk_idx
+                        while len(downloaded_usrs) != download:
+                            ch = random.choice(range(clients))
+                            if ch not in downloaded_usrs and ch != idx:
+                                downloaded_usrs.append(ch)
+                        logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
 
                         # calculate weights
                         weights = []
                         models_diff_list = []
-                        for request in range(clients):
+                        for request in downloaded_usrs:
                             params_diff = []
                             tensor_diff = torch.Tensor(params_diff)
                             models_diff = []
@@ -320,8 +347,10 @@ if __name__ == '__main__':
                                     # logging.info('[ICLR-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
                                     tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
                                     models_diff.append(param_cur - param_request)
-                                logging.info('[ICLR-EVAL] {} compare to {} with difference {}'.format(idx, request, torch.norm(tensor_diff), 0))
-                                weights.append((local_only_loss - request_loss) / (torch.norm(tensor_diff) + 1e-5))
+                                # logging.info('[ICLR-EVAL] {} compare to {} with difference {}'.format(idx, request, torch.norm(tensor_diff), 0))
+                                w = (local_only_loss - request_loss) / torch.norm(tensor_diff)
+                                prob_download_dict[idx][request] += w
+                                weights.append(w)
                             models_diff_list.append(models_diff)
 
                         # exclude negative value
@@ -329,10 +358,7 @@ if __name__ == '__main__':
                             weights[item] = max(0, weights[item])
                         # normalize weights
                         base = sum(weights)
-                        if base == 0:
-                            # loss_update_models_dict[idx].append(usr_models[idx].state_dict())
-                            pass
-                        else:
+                        if base != 0:
                             for item in range(len(weights)):
                                 weights[item] = weights[item] / base
 
@@ -345,7 +371,7 @@ if __name__ == '__main__':
                             # loss_update_models_dict[idx].append(local_update_model)
 
                         iclar_loss, iclr_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
-                        logging.critical('[ICLR - EVAL] ICLR Accuracy {}% Loss {}'.format(iclr_acc * 100, iclar_loss))
+                        logging.critical('[ICLR - EVAL] ICLR {} Accuracy {}% Loss {}'.format(idx, iclr_acc * 100, iclar_loss))
                         loss_update_acc_dict[idx].append(iclr_acc)
 
         if active_local_sv or active_local_loss:
