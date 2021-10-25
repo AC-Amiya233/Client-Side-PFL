@@ -94,8 +94,8 @@ if __name__ == '__main__':
     # configs:
     task_repeat_time = 1
     # participant
-    clients = 10
-    select = 10
+    clients = 15
+    select = 15
     download = 5
     exploit = 4
     explore = 1
@@ -103,18 +103,25 @@ if __name__ == '__main__':
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 1
+    global_epoch = 15
     local_epoch = 5
     batch_size = 40
+    # Download models
+    active_partial_download = True
+
     # SV for personalization
-    active_local_sv = True
+    active_local_sv = False
     sv_eval_method = 'acc'
 
     # FedFomo for personalization
-    active_local_loss = False
+    active_local_loss = True
 
     # R = 1
-    R = 3 * clients
+    if active_partial_download:
+        R = 3 * (download + 1)
+        # R = 6
+    else :
+        R = 3 * clients
 
     multi_task_avg_accuracy_list = [0 for i in range(task_repeat_time)]
 
@@ -217,20 +224,31 @@ if __name__ == '__main__':
                         # request other clients model
                         logging.info('[SV] Start SV Computation')
                         local_only_acc = local_update_acc_dict[idx][-1]
-                        logging.info('[SV] {} Only with Accuracy {}%'.format(idx, local_only_acc * 100))
+                        logging.critical('[SV] {} Only with Accuracy {}%'.format(idx, local_only_acc * 100))
 
                         # compute probs:
-                        downloaded_usrs = []
-                        topk_idx = heapq.nlargest(exploit, range(len(prob_download_dict[idx])), prob_download_dict[idx].__getitem__)
-                        downloaded_usrs += topk_idx
-                        while len(downloaded_usrs) != download:
-                            ch = random.choice(range(clients))
-                            if ch not in downloaded_usrs and ch != idx:
-                                downloaded_usrs.append(ch)
-                        logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
+                        participate = [i for i in range(clients) if i != idx]
+                        num_pull_models = clients - 1
+                        if active_partial_download:
+                            downloaded_usrs = []
+                            topk_idx = heapq.nlargest(exploit, range(len(prob_download_dict[idx])), prob_download_dict[idx].__getitem__)
+                            downloaded_usrs += topk_idx
+                            while len(downloaded_usrs) != download:
+                                ch = random.choice(range(clients))
+                                if ch not in downloaded_usrs and ch != idx:
+                                    downloaded_usrs.append(ch)
+                            logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
+
+                            participate = downloaded_usrs
+                            num_pull_models = len(downloaded_usrs)
+
+                        backup = [i for i in participate]
+
+                        local_total_models_num = num_pull_models + 1
+                        participate.append(idx)
 
                         perm_list = []
-                        perm_list += list(itertools.permutations(np.arange(clients), clients))
+                        perm_list += list(itertools.permutations(participate, local_total_models_num))
                         r_perm_index = np.random.choice([i for i in range(len(perm_list))], R, replace=False)
                         r_perm = []
                         for i in r_perm_index:
@@ -238,10 +256,10 @@ if __name__ == '__main__':
                         logging.info(r_perm)
                         logging.info('[SV] Random Select permutation {} in {}'.format(len(r_perm), len(perm_list)))
                         # start sv part
-                        evaluate_sv_info_dict = {i: [] for i in range(clients)}
-                        evaluated_sv = []
+                        evaluate_sv_info_dict = {i: [] for i in participate}
+                        evaluated_sv_dict = {i: 0. for i in participate}
                         for item in r_perm:
-                            logging.critical('[SV] Current Task {}, Global Round {}, Index {} Processing {}'.format(task+1, global_round, idx, item))
+                            logging.info('[SV] Current Task {}, Global Round {}, Index {} Processing {}'.format(task+1, global_round, idx, item))
                             evaluated_sv = []
                             weights_queue = []
                             node_queue = []
@@ -254,68 +272,76 @@ if __name__ == '__main__':
                                 global_model[0].load_state_dict(avg)
                                 cur_loss, cur_acc = evaluate_model(global_model[0], usr_test_loaders[idx])
                                 if sv_eval_method == 'acc':
-                                    logging.info('[EVAL] {}({}) on {} with accuracy influence {} - {} = {}%'.format(member, len(node_queue), idx, cur_acc * 100, acc_history[-1] * 100, (cur_acc - acc_history[-1]) * 100))
+                                    # logging.info('[EVAL] {}({}) on {} with accuracy influence {} - {} = {}%'.format(member, len(node_queue), idx, cur_acc * 100, acc_history[-1] * 100, (cur_acc - acc_history[-1]) * 100))
                                     evaluate_sv_info_dict[member].append(cur_acc - acc_history[-1])
                                     acc_history.append(cur_acc)
                                 if sv_eval_method == 'loss':
-                                    logging.info('[EVAL] {}({}) on {} with loss influence {} - {} = {}'.format(member, len(node_queue), idx, loss_history[-1], cur_loss, loss_history[-1] - cur_loss))
+                                     #logging.info('[EVAL] {}({}) on {} with loss influence {} - {} = {}'.format(member, len(node_queue), idx, loss_history[-1], cur_loss, loss_history[-1] - cur_loss))
                                     evaluate_sv_info_dict[member].append(loss_history[-1] - cur_loss)
                                     loss_history.append(cur_loss)
+                        logging.info('[EVAL] Info gained {}'.format(evaluate_sv_info_dict))
                         # Avg sv
-                        for i in range(clients):
-                            evaluated_sv.append(np.mean(evaluate_sv_info_dict[i]))
-                        logging.critical('[SV] Eval SV: {}'.format(evaluated_sv))
+                        for i in participate:
+                            # logging.critical('[EVAL] Write {} in {}'.format(np.mean(evaluate_sv_info_dict[i]), i))
+                            evaluated_sv_dict[i] = np.mean(evaluate_sv_info_dict[i])
+                        logging.info('[SV] Eval SV: {}'.format(evaluated_sv_dict))
                         # calculate weights based on sv
+
+                        # update local downlaad dictionary
+                        for d in backup:
+                            logging.debug('[Prob] Update {}->{}: pro from {} to {} with change {}'.format(idx, d, prob_download_dict[idx][d], prob_download_dict[idx][d] + evaluated_sv_dict[d], evaluated_sv_dict[d]))
+                            prob_download_dict[idx][d] += evaluated_sv_dict[d]
 
                         # calculate model differences
 
                         # TODO NEW EVAL METHOD
-                        models_difference = []
-                        for request in range(clients):
+                        models_difference = {i: 0. for i in participate}
+                        for request in participate:
                             params_diff = []
                             params_diff = torch.Tensor(params_diff)
                             if request != idx:
                                 for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
                                     params_diff = torch.cat((params_diff, ((param_cur - param_request).view(-1))), 0)
                                     # logging.info('[SV] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
-                                models_difference.append(torch.norm(params_diff).detach().numpy())
+                                models_difference[request] = torch.norm(params_diff).detach().numpy()
+                                # logging.info('[SV - EVAL] {} with models_difference {}'.format(request, models_difference[request]))
                             else:
-                                models_difference.append(1)
+                                models_difference[request] = 1.
+                                # logging.info('[SV - EVAL] {} with models_difference {}'.format(request, models_difference[request]))
                         logging.info('[SV - EVAL] Model Difference {}'.format(models_difference))
 
                         # only use positive sv clients
-                        logging.info('[SV - EVAL] Before Exclude Negative Values&Itself SV: {}'.format(evaluated_sv))
+                        # logging.info('[SV - EVAL] Before Exclude Negative Values&Itself SV: {}'.format(evaluated_sv_dict))
+
                         positive_idx = []
                         positive_sv = []
-                        for i in range(clients):
-                            if evaluated_sv[i] > 0:
+                        for i in participate:
+                            if evaluated_sv_dict[i] > 0:
                                 positive_idx.append(i)
                                 # positive_sv.append(evaluated_sv[i])
-                                logging.info('[SV/MODELS] Request {} ==> {} / {} = {}'.format(i, evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
-                                positive_sv.append(evaluated_sv[i] / models_difference[i])
+                                # logging.info('[SV/MODELS] Request {} ==> {} / {} = {}'.format(i, evaluated_sv_dict[i], models_difference[i], evaluated_sv_dict[i] / models_difference[i]))
+                                positive_sv.append(evaluated_sv_dict[i] / models_difference[i])
                                 # logging.info('[SV/MODELS - EVAL] New Strategy Calculation {} / {} = {}'.format(evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
 
                         # norm
-                        positive_sv = positive_sv / sum(positive_sv)
-                        logging.info('[SV] Positive Index exclude idx itself{}'.format(positive_idx))
-                        logging.info('[SV] Positive Weights {} exclude idx itself'.format(positive_sv))
+                        positive_sv = [i / sum(positive_sv) for i in positive_sv]
+                        logging.info('[SV] Positive Index {}'.format(positive_idx))
+                        logging.info('[SV] Positive Weights {}'.format(positive_sv))
 
                         free_space = 1.0 - positive_sv[positive_idx.index(idx)]
-                        logging.info('[SV] Owner {] contributes {}'.format(idx, free_space))
+                        logging.info('[SV] Owner {} contributes {}'.format(idx, free_space))
 
-                        weights = []
-                        for i in range(clients):
+                        weights = {i: 0. for i in participate}
+                        for i in participate:
                             if i in positive_idx and i != idx:
-                                weights.append(free_space * positive_sv[positive_idx.index(i)])
-                            else:
-                                weights.append(0)
-                        logging.critical('[SV] {} Allocates Weights {}'.format(idx, weights))
+                                weights[i] = free_space * positive_sv[positive_idx.index(idx)]
+                        logging.info('[SV] {} Allocates Weights {}'.format(idx, weights))
 
-                        for request in range(clients):
+                        for request in participate:
                             for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
-                                logging.info('[SV-AGG] idx({}) <-----> req({}): diff: {} * weight {}'.format(
-                                    torch.norm(param.data.clone()), torch.norm(param_request.clone()),
-                                    torch.norm(param_request.data.clone() - param.data.clone()), weights[request]))
+                                # logging.info('[SV-AGG] idx({}) <-----> req({}): diff: {} * weight {}'.format(
+                                #     torch.norm(param.data.clone()), torch.norm(param_request.clone()),
+                                #     torch.norm(param_request.data.clone() - param.data.clone()), weights[request]))
                                 param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
                         fomo_loss, fomo_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                         logging.critical('[SV] New Model Local Accuracy {}%'.format(fomo_acc * 100))
