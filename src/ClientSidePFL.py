@@ -91,7 +91,7 @@ if __name__ == '__main__':
     set_seed(8)
     logging.info('Client Side PFL Training Starts')
 
-    # configs:
+    # todo Configs:
     task_repeat_time = 5
     # participant
     clients = 10
@@ -100,7 +100,7 @@ if __name__ == '__main__':
     exploit = 4
     explore = 1
     #dataset
-    data = 'mnist'
+    data = 'cifar10'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
     global_epoch = 10
@@ -110,18 +110,18 @@ if __name__ == '__main__':
     active_partial_download = True
 
     # SV for personalization
-    active_local_sv = False
+    active_local_sv = True
     sv_eval_method = 'acc'
-
-    # FedFomo for personalization
-    active_local_loss = True
-
     # R = 1
     if active_partial_download:
         R = 3 * (download + 1)
         # R = 6
-    else :
+    else:
         R = 3 * clients
+
+    # FedFomo for personalization
+    active_local_loss = False
+
 
     multi_task_avg_accuracy_list = [0 for i in range(task_repeat_time)]
 
@@ -130,7 +130,14 @@ if __name__ == '__main__':
         prob_download_dict = {idx: [float('-inf') if i == idx else 0 for i in range(clients)] for idx in range(clients)}
 
         usr_idx = [i for i in range(clients)]
-        usr_models = [CNNMnist() for i in range(clients)]
+        # client model
+        if data == 'mnist':
+            usr_models = [CNNMnist() for i in range(clients)]
+        elif data == 'fashion-mnist':
+            usr_models = [CNNFashion_Mnist() for i in range(clients)]
+        elif data == 'cifar10' or 'cifar100':
+            usr_models = [CNNCifar() for i in range(clients)]
+
         usr_states = [0 for i in range(clients)]
         usr_participate = [i for i in range(clients)]
         usr_participate_counter = [0 for i in range(clients)]
@@ -143,7 +150,15 @@ if __name__ == '__main__':
         # usr_dataset_loaders, test_loader = gen_dataloaders_with_majority(data, path, clients, 40)
         # data_loaders = gen_specific_major_loaders(data, path, clients, 40)
         logging.info('User Dataset Loader Details {}'.format(len(usr_dataset_loaders)))
-        global_model = [CNNMnist()]
+
+        # the global model for sv evaluation
+        if data == 'mnist':
+            global_model = [CNNMnist()]
+        elif data == 'fashion-mnist':
+            global_model = [CNNFashion_Mnist()]
+        elif data == 'cifar10' or 'cifar100':
+            global_model = [CNNCifar()]
+
 
         # eval/sv needs:
         local_update_global_acc_list = []
@@ -237,7 +252,7 @@ if __name__ == '__main__':
                                 ch = random.choice(range(clients))
                                 if ch not in downloaded_usrs and ch != idx:
                                     downloaded_usrs.append(ch)
-                            logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
+                            logging.critical('[SV] Download {} from the server'.format(downloaded_usrs))
 
                             participate = downloaded_usrs
                             num_pull_models = len(downloaded_usrs)
@@ -475,7 +490,9 @@ if __name__ == '__main__':
     if active_local_sv:
         with open('{}_exper2.csv'.format("SV"), 'w') as f:
             [f.write('{0},{1}\n'.format(key, '{}'.format(multi_task_avg_accuracy_list).strip('[]'))) for key in range(task_repeat_time)]
-
-    if active_local_loss:
+    elif active_local_loss:
         with open('{}_exper2.csv'.format("Fomo"), 'w') as f:
+            [f.write('{0},{1}\n'.format(key, '{}'.format(multi_task_avg_accuracy_list).strip('[]'))) for key in range(task_repeat_time)]
+    else:
+        with open('{}_exper2.csv'.format("Local"), 'w') as f:
             [f.write('{0},{1}\n'.format(key, '{}'.format(multi_task_avg_accuracy_list).strip('[]'))) for key in range(task_repeat_time)]

@@ -4,7 +4,7 @@ from collections import defaultdict
 import numpy as np
 import torch.utils.data
 import torchvision.transforms as transforms
-from torchvision.datasets import MNIST, CIFAR10, CIFAR100
+from torchvision.datasets import MNIST, FashionMNIST, CIFAR10, CIFAR100
 
 
 def get_datasets(data_name, dataroot, normalize=True, val_size=10000):
@@ -17,7 +17,7 @@ def get_datasets(data_name, dataroot, normalize=True, val_size=10000):
     :return: train_set, val_set, test_set (tuple of pytorch dataset/subset)
     """
 
-    if data_name =='cifar10':
+    if data_name == 'cifar10':
         normalization = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         data_obj = CIFAR10
     elif data_name == 'mnist':
@@ -26,8 +26,11 @@ def get_datasets(data_name, dataroot, normalize=True, val_size=10000):
     elif data_name == 'cifar100':
         normalization = transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
         data_obj = CIFAR100
+    elif data_name == 'fashion-mnist':
+        normalization = transforms.Normalize((0.1307,), (0.3081,))
+        data_obj = FashionMNIST
     else:
-        raise ValueError("choose data_name from ['mnist', 'cifar10', 'cifar100']")
+        raise ValueError("choose data_name from ['mnist', 'fashion-mnist', 'cifar10', 'cifar100']")
 
     trans = [transforms.ToTensor()]
 
@@ -173,6 +176,7 @@ def gen_random_loaders(data_name, data_path, num_users, bz, classes_per_user):
         if i == 0:
             cls_partitions = gen_classes_per_node(d, num_users, classes_per_user)
             loader_params['shuffle'] = True
+            print(cls_partitions)
         usr_subset_idx = gen_data_split(d, num_users, cls_partitions)
         # create subsets for each client
         subsets = list(map(lambda x: torch.utils.data.Subset(d, x), usr_subset_idx))
