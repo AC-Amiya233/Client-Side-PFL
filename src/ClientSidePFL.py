@@ -92,32 +92,36 @@ if __name__ == '__main__':
     logging.info('Client Side PFL Training Starts')
 
     # todo Configs:
-    task_repeat_time = 5
+    task_repeat_time = 1
+    global_epoch = 20
+    local_epoch = 10
+    batch_size = 40
+
     # participant
     clients = 10
     select = 10
-    download = 5
-    exploit = 4
-    explore = 1
-    #dataset
+
+    # dataset
     data = 'cifar10'
     path = '../data'
+    # loss function
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 10
-    local_epoch = 5
-    batch_size = 40
-    # Download models
+
+    # download models
     active_partial_download = True
+    download = 4
+    exploit = 3
+    explore = 1
 
     # SV for personalization
     active_local_sv = True
-    sv_eval_method = 'acc'
+    sv_eval_method = 'loss'
     # R = 1
     if active_partial_download:
-        R = 3 * (download + 1)
+        R = 5 * (download + 1)
         # R = 6
     else:
-        R = 3 * clients
+        R = 5 * clients
 
     # FedFomo for personalization
     active_local_loss = False
@@ -144,7 +148,7 @@ if __name__ == '__main__':
         # usr_optimizers = [torch.optim.SGD(
         #         usr_models[i].parameters(), lr=0.01, momentum=.9, weight_decay=5e-5
         #     ) for i in range(clients)]
-        usr_optimizers = [torch.optim.Adam(usr_models[i].parameters(), lr=0.01) for i in range(clients)]
+        usr_optimizers = [torch.optim.Adam(usr_models[i].parameters(), lr=0.001) for i in range(clients)]
         # logging.info(usr_optimizers)
         usr_dataset_loaders, usr_val_loaders, usr_test_loaders = gen_random_loaders(data, path, clients, 40, 2)
         # usr_dataset_loaders, test_loader = gen_dataloaders_with_majority(data, path, clients, 40)
@@ -239,11 +243,14 @@ if __name__ == '__main__':
                         # request other clients model
                         logging.info('[SV] Start SV Computation')
                         local_only_acc = local_update_acc_dict[idx][-1]
+                        local_only_loss = local_update_loss_dict[idx][-1]
                         logging.critical('[SV] {} Only with Accuracy {}%'.format(idx, local_only_acc * 100))
 
                         # compute probs:
                         participate = [i for i in range(clients) if i != idx]
                         num_pull_models = clients - 1
+
+                        # todo choose to download other models
                         if active_partial_download:
                             downloaded_usrs = []
                             topk_idx = heapq.nlargest(exploit, range(len(prob_download_dict[idx])), prob_download_dict[idx].__getitem__)
@@ -274,7 +281,7 @@ if __name__ == '__main__':
                         evaluate_sv_info_dict = {i: [] for i in participate}
                         evaluated_sv_dict = {i: 0. for i in participate}
                         for item in r_perm:
-                            logging.info('[SV] Current Task {}, Global Round {}, Index {} Processing {}'.format(task+1, global_round, idx, item))
+                            logging.info('[SV-{}] Current Task {}, Global Round {}, Index {} Processing {}'.format(sv_eval_method, task+1, global_round, idx, item))
                             evaluated_sv = []
                             weights_queue = []
                             node_queue = []
@@ -344,7 +351,7 @@ if __name__ == '__main__':
                         logging.info('[SV] Positive Weights {}'.format(positive_sv))
 
                         free_space = 1.0 - positive_sv[positive_idx.index(idx)]
-                        logging.info('[SV] Owner {} contributes {}'.format(idx, free_space))
+                        logging.info('[SV] Owner {} leaves {} space for other model aggregation'.format(idx, free_space))
 
                         weights = {i: 0. for i in participate}
                         for i in participate:
@@ -352,15 +359,17 @@ if __name__ == '__main__':
                                 weights[i] = free_space * positive_sv[positive_idx.index(idx)]
                         logging.info('[SV] {} Allocates Weights {}'.format(idx, weights))
 
+                        logging.critical('[Before SV Aggregation] {} Only with Accuracy {}% and Local loss {}'.format(idx, local_only_acc * 100, local_only_loss))
                         for request in participate:
                             for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
                                 # logging.info('[SV-AGG] idx({}) <-----> req({}): diff: {} * weight {}'.format(
                                 #     torch.norm(param.data.clone()), torch.norm(param_request.clone()),
                                 #     torch.norm(param_request.data.clone() - param.data.clone()), weights[request]))
                                 param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
-                        fomo_loss, fomo_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
-                        logging.critical('[SV] New Model Local Accuracy {}%'.format(fomo_acc * 100))
-                        loss_update_acc_dict[idx].append(fomo_acc)
+
+                        sv_loss, sv_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
+                        logging.critical('[After SV Aggregation] New Model Local Accuracy {}% and Local Loss {}'.format(sv_acc * 100, sv_loss))
+                        loss_update_acc_dict[idx].append(sv_acc)
 
                     if active_local_loss:
                         logging.info('[ICLR] Start Loss Computation')
