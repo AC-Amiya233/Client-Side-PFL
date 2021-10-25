@@ -92,10 +92,10 @@ if __name__ == '__main__':
     logging.info('Client Side PFL Training Starts')
 
     # configs:
-    task_repeat_time = 1
+    task_repeat_time = 5
     # participant
-    clients = 15
-    select = 15
+    clients = 10
+    select = 10
     download = 5
     exploit = 4
     explore = 1
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     data = 'mnist'
     path = '../data'
     criteria = torch.nn.CrossEntropyLoss()
-    global_epoch = 15
+    global_epoch = 10
     local_epoch = 5
     batch_size = 40
     # Download models
@@ -364,38 +364,36 @@ if __name__ == '__main__':
                         logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
 
                         # calculate weights
-                        weights = []
-                        models_diff_list = []
+                        weights = {i: 0. for i in downloaded_usrs}
+                        models_diff_dict = {i: [] for i in downloaded_usrs}
                         for request in downloaded_usrs:
                             params_diff = []
                             tensor_diff = torch.Tensor(params_diff)
                             models_diff = []
-                            if request != idx:
-                                request_loss, request_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
-                                logging.info('[ICLR-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
-                                for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
-                                    # logging.info('[ICLR-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
-                                    tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
-                                    models_diff.append(param_cur - param_request)
-                                # logging.info('[ICLR-EVAL] {} compare to {} with difference {}'.format(idx, request, torch.norm(tensor_diff), 0))
-                                w = (local_only_loss - request_loss) / torch.norm(tensor_diff)
-                                prob_download_dict[idx][request] += w
-                                weights.append(w)
-                            models_diff_list.append(models_diff)
-
+                            request_loss, request_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
+                            logging.info('[ICLR-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
+                            for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
+                                # logging.info('[ICLR-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
+                                tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
+                                models_diff.append(param_cur - param_request)
+                            w = (local_only_loss - request_loss) / torch.norm(tensor_diff)
+                            prob_download_dict[idx][request] += w
+                            weights[request] = w
+                            models_diff_dict[request] = models_diff
                         # exclude negative value
-                        for item in range(len(weights)):
+                        for item in downloaded_usrs:
                             weights[item] = max(0, weights[item])
+                        logging.info('[ICLR] weights {}'.format(weights))
                         # normalize weights
-                        base = sum(weights)
+                        base = sum([i for i in weights.values()])
                         if base != 0:
-                            for item in range(len(weights)):
+                            for item in downloaded_usrs:
                                 weights[item] = weights[item] / base
-
+                            logging.critical('[ICLR] weights {}'.format(weights))
                             # model aggregation to update local model
                             # local_update_model = usr_models[idx].state_dict()
-                            for request in range(0, clients - 1):
-                                for param, param_request in zip(usr_models[idx].parameters(), models_diff_list[request]):
+                            for request in downloaded_usrs:
+                                for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters(),):
                                     param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
                             # usr_models[idx].load_state_dict(local_update_model)
                             # loss_update_models_dict[idx].append(local_update_model)
