@@ -353,10 +353,12 @@ if __name__ == '__main__':
                         free_space = 1.0 - positive_sv[positive_idx.index(idx)]
                         logging.info('[SV] Owner {} leaves {} space for other model aggregation'.format(idx, free_space))
 
+                        # free_space to modify the weights or not
                         weights = {i: 0. for i in participate}
                         for i in participate:
                             if i in positive_idx and i != idx:
-                                weights[i] = free_space * positive_sv[positive_idx.index(idx)]
+                                weights[i] = positive_sv[positive_idx.index(i)]           # not add free_space
+                                # weights[i] = free_space * positive_sv[positive_idx.index(i)]  # add free_space
                         logging.info('[SV] {} Allocates Weights {}'.format(idx, weights))
 
                         logging.critical('[Before SV Aggregation] {} Only with Accuracy {}% and Local loss {}'.format(idx, local_only_acc * 100, local_only_loss))
