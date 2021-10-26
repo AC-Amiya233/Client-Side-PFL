@@ -116,6 +116,7 @@ if __name__ == '__main__':
     # SV for personalization
     active_local_sv = True
     sv_eval_method = 'acc'
+    whether_free_space = False
     # R = 1
     if active_partial_download:
         R = 10 * (download + 1)
@@ -282,7 +283,7 @@ if __name__ == '__main__':
                         evaluate_sv_info_dict = {i: [] for i in participate}
                         evaluated_sv_dict = {i: 0. for i in participate}
                         for item in r_perm:
-                            logging.info('[SV-{}] Current Task {}, Global Round {}, Index {} Processing {}'.format(sv_eval_method, task+1, global_round, idx, item))
+                            logging.info('[SV-{}-FreeSpace:{}] Current Task {}, Global Round {}, Index {} Processing {}'.format(sv_eval_method, whether_free_space, task+1, global_round, idx, item))
                             evaluated_sv = []
                             weights_queue = []
                             node_queue = []
@@ -358,8 +359,10 @@ if __name__ == '__main__':
                         weights = {i: 0. for i in participate}
                         for i in participate:
                             if i in positive_idx and i != idx:
-                                weights[i] = positive_sv[positive_idx.index(i)]             # not add free_space
-                                # weights[i] = free_space * positive_sv[positive_idx.index(i)]  # add free_space
+                                if whether_free_space:
+                                    weights[i] = free_space * positive_sv[positive_idx.index(i)]  # add free_space
+                                else:
+                                    weights[i] = positive_sv[positive_idx.index(i)]               # not add free_space
                         logging.info('[SV] {} Allocates Weights {}'.format(idx, weights))
 
                         logging.critical('[Before SV Aggregation] {} Only with Accuracy {}% and Local loss {}'.format(idx, local_only_acc * 100, local_only_loss))
