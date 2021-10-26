@@ -88,11 +88,11 @@ def evaluate_model(model, test_loader):
 
 if __name__ == '__main__':
     set_logger()
-    set_seed(8)
+    set_seed(2)
     logging.info('Client Side PFL Training Starts')
 
     # todo Configs:
-    task_repeat_time = 1
+    task_repeat_time = 3
     global_epoch = 20
     local_epoch = 10
     batch_size = 40
@@ -115,13 +115,13 @@ if __name__ == '__main__':
 
     # SV for personalization
     active_local_sv = True
-    sv_eval_method = 'loss'
+    sv_eval_method = 'acc'
     # R = 1
     if active_partial_download:
-        R = 5 * (download + 1)
+        R = 10 * (download + 1)
         # R = 6
     else:
-        R = 5 * clients
+        R = 10 * clients
 
     # FedFomo for personalization
     active_local_loss = False
