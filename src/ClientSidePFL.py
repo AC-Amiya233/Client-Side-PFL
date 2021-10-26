@@ -92,7 +92,7 @@ if __name__ == '__main__':
     logging.info('Client Side PFL Training Starts')
 
     # todo Configs:
-    task_repeat_time = 3
+    task_repeat_time = 1
     global_epoch = 20
     local_epoch = 10
     batch_size = 40
@@ -156,6 +156,7 @@ if __name__ == '__main__':
         logging.info('User Dataset Loader Details {}'.format(len(usr_dataset_loaders)))
 
         # the global model for sv evaluation
+        global_model = []
         if data == 'mnist':
             global_model = [CNNMnist()]
         elif data == 'fashion-mnist':
@@ -357,7 +358,7 @@ if __name__ == '__main__':
                         weights = {i: 0. for i in participate}
                         for i in participate:
                             if i in positive_idx and i != idx:
-                                weights[i] = positive_sv[positive_idx.index(i)]           # not add free_space
+                                weights[i] = positive_sv[positive_idx.index(i)]             # not add free_space
                                 # weights[i] = free_space * positive_sv[positive_idx.index(i)]  # add free_space
                         logging.info('[SV] {} Allocates Weights {}'.format(idx, weights))
 
@@ -406,10 +407,17 @@ if __name__ == '__main__':
                             prob_download_dict[idx][request] += w
                             weights[request] = w
                             models_diff_dict[request] = models_diff
-                        # exclude negative value
+
+                        # exclude negative value, only maintain the positive weight
                         for item in downloaded_usrs:
                             weights[item] = max(0, weights[item])
                         logging.info('[ICLR] weights {}'.format(weights))
+
+                        # print the positive weight and its idx of download user, the weights are not norm
+                        for request in downloaded_usrs:
+                            if weights[request] > 0:
+                                logging.info('[ICLR] the client idx is {} and its positive weight is {}'.format(request, weights[request]))
+
                         # normalize weights
                         base = sum([i for i in weights.values()])
                         if base != 0:
@@ -473,19 +481,19 @@ if __name__ == '__main__':
         plt.show()
 
         if active_local_sv:
-            with open('{}.csv'.format('./SV/T{}_sv_{}_update_accuracy'.format(task, clients)), 'w') as f:
+            with open('{}.csv'.format('./SV/T{}_sv_client{}_round{}_update_accuracy'.format(task, clients, global_epoch)), 'w') as f:
                 [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in loss_update_acc_dict.items()]
 
-            with open('{}.csv'.format('./SV/T{}_sv_{}_local_update_accuracy'.format(task, clients)), 'w') as f:
+            with open('{}.csv'.format('./SV/T{}_sv_client{}_round{}_local_update_accuracy'.format(task, clients, global_epoch)), 'w') as f:
                 [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in local_update_acc_dict.items()]
         elif active_local_loss:
-            with open('{}.csv'.format('./ICLR/T{}_iclr_{}_update_accuracy'.format(task, clients)), 'w') as f:
+            with open('{}.csv'.format('./ICLR/T{}_iclr_client{}_round{}_update_accuracy'.format(task, clients, global_epoch)), 'w') as f:
                 [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in loss_update_acc_dict.items()]
 
-            with open('{}.csv'.format('./ICLR/T{}_iclr_{}_local_update_accuracy'.format(task, clients)), 'w') as f:
+            with open('{}.csv'.format('./ICLR/T{}_iclr_client{}_round{}_local_update_accuracy'.format(task, clients, global_epoch)), 'w') as f:
                 [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in local_update_acc_dict.items()]
         else:
-            with open('{}.csv'.format('./PureLU/T{}_pure_local_{}_update_accuracy'.format(task, clients)), 'w') as f:
+            with open('{}.csv'.format('./PureLU/T{}_pure_local_client{}_round{}_update_accuracy'.format(task, clients, global_epoch)), 'w') as f:
                 [f.write('{0},{1}\n'.format(key, '{}'.format(value).strip('[]'))) for key, value in local_update_acc_dict.items()]
 
     multitask_fig = plt.figure('Multi-task Figure', figsize=(10, 10))
