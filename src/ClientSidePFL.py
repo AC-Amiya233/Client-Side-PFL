@@ -88,11 +88,11 @@ def evaluate_model(model, test_loader):
 
 if __name__ == '__main__':
     set_logger()
-    set_seed(2)
+    set_seed(4)
     logging.info('Client Side PFL Training Starts')
 
     # todo Configs:
-    task_repeat_time = 1
+    task_repeat_time = 3
     global_epoch = 20
     local_epoch = 10
     batch_size = 40
@@ -109,14 +109,14 @@ if __name__ == '__main__':
 
     # download models
     active_partial_download = True
-    download = 4
-    exploit = 3
+    download = 5
+    exploit = 4
     explore = 1
 
-    # SV for personalization
+    # todo SV for personalization
     active_local_sv = True
     sv_eval_method = 'acc'
-    whether_free_space = False
+    whether_free_space = True
     # R = 1
     if active_partial_download:
         R = 10 * (download + 1)
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     else:
         R = 10 * clients
 
-    # FedFomo for personalization
+    # todo FedFomo for personalization
     active_local_loss = False
 
 
@@ -146,11 +146,12 @@ if __name__ == '__main__':
         usr_states = [0 for i in range(clients)]
         usr_participate = [i for i in range(clients)]
         usr_participate_counter = [0 for i in range(clients)]
-        # usr_optimizers = [torch.optim.SGD(
-        #         usr_models[i].parameters(), lr=0.01, momentum=.9, weight_decay=5e-5
-        #     ) for i in range(clients)]
-        usr_optimizers = [torch.optim.Adam(usr_models[i].parameters(), lr=0.001) for i in range(clients)]
+
+        # todo optimizer setting
+        usr_optimizers = [torch.optim.SGD(usr_models[i].parameters(), lr=0.1, momentum=0, weight_decay=1e-4) for i in range(clients)]
+        # usr_optimizers = [torch.optim.Adam(usr_models[i].parameters(), lr=0.001) for i in range(clients)]
         # logging.info(usr_optimizers)
+
         usr_dataset_loaders, usr_val_loaders, usr_test_loaders = gen_random_loaders(data, path, clients, 40, 2)
         # usr_dataset_loaders, test_loader = gen_dataloaders_with_majority(data, path, clients, 40)
         # data_loaders = gen_specific_major_loaders(data, path, clients, 40)
@@ -347,7 +348,7 @@ if __name__ == '__main__':
                                 positive_sv.append(evaluated_sv_dict[i] / models_difference[i])
                                 # logging.info('[SV/MODELS - EVAL] New Strategy Calculation {} / {} = {}'.format(evaluated_sv[i], models_difference[i], evaluated_sv[i] / models_difference[i]))
 
-                        # norm
+                        # norm with idx itself
                         positive_sv = [i / sum(positive_sv) for i in positive_sv]
                         logging.info('[SV] Positive Index {}'.format(positive_idx))
                         logging.info('[SV] Positive Weights {}'.format(positive_sv))
@@ -355,15 +356,24 @@ if __name__ == '__main__':
                         free_space = 1.0 - positive_sv[positive_idx.index(idx)]
                         logging.info('[SV] Owner {} leaves {} space for other model aggregation'.format(idx, free_space))
 
+                        # norm with idx itself
+                        positive_idx_noitself = positive_idx
+                        positive_sv_noitself = positive_sv
+                        positive_idx_noitself.pop()
+                        positive_sv_noitself.pop()
+                        positive_sv_noitself = [i / sum(positive_sv_noitself) for i in positive_sv_noitself]
+
+                        logging.info('[SV] Positive norm weights without idx itself {}'.format(positive_sv_noitself))
+
                         # free_space to modify the weights or not
                         weights = {i: 0. for i in participate}
                         for i in participate:
                             if i in positive_idx and i != idx:
                                 if whether_free_space:
-                                    weights[i] = free_space * positive_sv[positive_idx.index(i)]  # add free_space
+                                    weights[i] = free_space * positive_sv_noitself[positive_idx_noitself.index(i)]  # add free_space
                                 else:
                                     weights[i] = positive_sv[positive_idx.index(i)]               # not add free_space
-                        logging.info('[SV] {} Allocates Weights {}'.format(idx, weights))
+                        logging.info('[SV] {} Allocated Weights {}'.format(idx, weights))
 
                         logging.critical('[Before SV Aggregation] {} Only with Accuracy {}% and Local loss {}'.format(idx, local_only_acc * 100, local_only_loss))
                         for request in participate:
@@ -378,10 +388,10 @@ if __name__ == '__main__':
                         loss_update_acc_dict[idx].append(sv_acc)
 
                     if active_local_loss:
-                        logging.info('[ICLR] Start Loss Computation')
+                        logging.info('[Fomo] Start Loss Computation')
                         local_only_acc = local_update_acc_dict[idx][-1]
                         local_only_loss = local_update_loss_dict[idx][-1]
-                        logging.info('[ICLR] {} Only with Accuracy {}% & Loss {}'.format(idx, local_only_acc * 100, local_only_loss))
+                        logging.info('[Fomo] {} Only with Accuracy {}% & Loss {}'.format(idx, local_only_acc * 100, local_only_loss))
 
                         # compute probs:
                         downloaded_usrs = []
@@ -391,7 +401,7 @@ if __name__ == '__main__':
                             ch = random.choice(range(clients))
                             if ch not in downloaded_usrs and ch != idx:
                                 downloaded_usrs.append(ch)
-                        logging.critical('[ICLR] Download {} from the server'.format(downloaded_usrs))
+                        logging.critical('[Fomo] Download {} from the server'.format(downloaded_usrs))
 
                         # calculate weights
                         weights = {i: 0. for i in downloaded_usrs}
@@ -401,9 +411,9 @@ if __name__ == '__main__':
                             tensor_diff = torch.Tensor(params_diff)
                             models_diff = []
                             request_loss, request_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
-                            logging.info('[ICLR-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
+                            logging.info('[Fomo-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
                             for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
-                                # logging.info('[ICLR-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
+                                # logging.info('[Fomo-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
                                 tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
                                 models_diff.append(param_cur - param_request)
                             w = (local_only_loss - request_loss) / torch.norm(tensor_diff)
@@ -414,19 +424,19 @@ if __name__ == '__main__':
                         # exclude negative value, only maintain the positive weight
                         for item in downloaded_usrs:
                             weights[item] = max(0, weights[item])
-                        logging.info('[ICLR] weights {}'.format(weights))
+                        logging.info('[Fomo] weights {}'.format(weights))
 
                         # print the positive weight and its idx of download user, the weights are not norm
                         for request in downloaded_usrs:
                             if weights[request] > 0:
-                                logging.info('[ICLR] the client idx is {} and its positive weight is {}'.format(request, weights[request]))
+                                logging.info('[Fomo] the client idx is {} and its positive weight is {}'.format(request, weights[request]))
 
                         # normalize weights
                         base = sum([i for i in weights.values()])
                         if base != 0:
                             for item in downloaded_usrs:
                                 weights[item] = weights[item] / base
-                            logging.critical('[ICLR] weights {}'.format(weights))
+                            logging.critical('[Fomo] weights {}'.format(weights))
                             # model aggregation to update local model
                             # local_update_model = usr_models[idx].state_dict()
                             for request in downloaded_usrs:
@@ -436,7 +446,7 @@ if __name__ == '__main__':
                             # loss_update_models_dict[idx].append(local_update_model)
 
                         iclar_loss, iclr_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
-                        logging.critical('[ICLR - EVAL] ICLR {} Accuracy {}% Loss {}'.format(idx, iclr_acc * 100, iclar_loss))
+                        logging.critical('[Fomo - EVAL] Fomo {} Accuracy {}% Loss {}'.format(idx, iclr_acc * 100, iclar_loss))
                         loss_update_acc_dict[idx].append(iclr_acc)
 
         if active_local_sv or active_local_loss:
