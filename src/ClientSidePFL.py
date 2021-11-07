@@ -15,26 +15,6 @@ from dataset import *
 from utils import *
 from models import *
 
-class Server():
-    def __init__(self, clients):
-        self.usr_idx = [i for i in range(clients)]
-        self.usr_models = [CNNMnist() for i in range(clients)]
-        self.usr_states = [0 for i in range(clients)]
-        self.usr_participate = [i for i in range(clients)]
-
-class Client():
-    def __init__(self):
-        self.model = CNNMnist()
-        self.data = []
-        self.optimizer = []
-
-    def request_other_models(self, server: Server):
-        pass
-
-    def handle_self_models(self, server: Server):
-        pass
-
-
 def average_weights(w):
     w_avg = copy.deepcopy(w[0])
     for key in w_avg.keys():
@@ -88,14 +68,16 @@ def evaluate_model(model, test_loader):
 
 if __name__ == '__main__':
     set_logger()
-    set_seed(4)
+    set_seed(40)
     logging.info('Client Side PFL Training Starts')
 
     # todo Configs:
-    task_repeat_time = 3
+    task_repeat_time = 1
     global_epoch = 20
     local_epoch = 10
     batch_size = 40
+
+    loss_repeating_val = 10
 
     # participant
     clients = 10
@@ -114,19 +96,17 @@ if __name__ == '__main__':
     explore = 1
 
     # todo SV for personalization
-    active_local_sv = True
+    active_local_sv = False
     sv_eval_method = 'acc'
     whether_free_space = True
-    # R = 1
+    whether_delta = False
     if active_partial_download:
-        R = 10 * (download + 1)
-        # R = 6
+        R = 3 * (download + 1)
     else:
-        R = 10 * clients
+        R = 3 * clients
 
     # todo FedFomo for personalization
-    active_local_loss = False
-
+    active_local_loss = True
 
     multi_task_avg_accuracy_list = [0 for i in range(task_repeat_time)]
 
@@ -185,6 +165,14 @@ if __name__ == '__main__':
         loss_update_models_dict = {i : [] for i in range(clients)}
         loss_update_acc_dict = {i : [] for i in range(clients)}
 
+        download_history = {i: [] for i in range(clients)}
+        selection_history = {i: [] for i in range(clients)}
+        selection_weighst_history = {i: [] for i in range(clients)}
+        before_selection_acc_history = {i: [] for i in range(clients)}
+        after_selection_acc_history = {i: [] for i in range(clients)}
+        before_selection_loss_history = {i: [] for i in range(clients)}
+        after_selection_loss_history = {i: [] for i in range(clients)}
+
         for global_round in range(1, global_epoch + 1):
             usr_states = [0 for i in range(clients)]
             # 1 - Select users
@@ -214,15 +202,14 @@ if __name__ == '__main__':
 
                     # Local update #
                     for local_round in range(1, local_epoch + 1):
-                        usr_models[idx].train()
-                        usr_optimizers[idx].zero_grad()
-                        batch = next(iter(usr_dataset_loaders[idx]))
-                        img, label = tuple(batch)
-                        pred = usr_models[idx](img)
-                        loss = criteria(pred, label)
-                        loss.backward()
-                        torch.nn.utils.clip_grad_norm_(usr_models[idx].parameters(), 50)
-                        usr_optimizers[idx].step()
+                        for i, batch_data in enumerate(usr_dataset_loaders[idx], 0):
+                            usr_models[idx].train()
+                            usr_optimizers[idx].zero_grad()
+                            img, label = batch_data
+                            pred = usr_models[idx](img)
+                            loss = criteria(pred, label)
+                            loss.backward()
+                            usr_optimizers[idx].step()
 
                     # Accuracy After Local update #
                     running_loss, running_correct, running_samples = 0., 0., 0.
@@ -249,6 +236,10 @@ if __name__ == '__main__':
                         local_only_loss = local_update_loss_dict[idx][-1]
                         logging.critical('[SV] {} Only with Accuracy {}%'.format(idx, local_only_acc * 100))
 
+                        # MAKER
+                        before_selection_acc_history[idx].append(local_only_acc)
+                        before_selection_loss_history[idx].append(local_only_loss)
+
                         # compute probs:
                         participate = [i for i in range(clients) if i != idx]
                         num_pull_models = clients - 1
@@ -268,6 +259,7 @@ if __name__ == '__main__':
                             num_pull_models = len(downloaded_usrs)
 
                         backup = [i for i in participate]
+                        download_history[idx].append(backup)
 
                         local_total_models_num = num_pull_models + 1
                         participate.append(idx)
@@ -356,6 +348,13 @@ if __name__ == '__main__':
                         free_space = 1.0 - positive_sv[positive_idx.index(idx)]
                         logging.info('[SV] Owner {} leaves {} space for other model aggregation'.format(idx, free_space))
 
+                        # self weights
+                        self_weights = positive_sv[-1]
+                        if not whether_delta:
+                            logging.info('[SV] Self info {}'.format(self_weights))
+                            for param in usr_models[idx].parameters():
+                                param.data = param.data.clone() * self_weights
+
                         # norm with idx itself
                         positive_idx_noitself = positive_idx
                         positive_sv_noitself = positive_sv
@@ -364,6 +363,10 @@ if __name__ == '__main__':
                         positive_sv_noitself = [i / sum(positive_sv_noitself) for i in positive_sv_noitself]
 
                         logging.info('[SV] Positive norm weights without idx itself {}'.format(positive_sv_noitself))
+
+                        # MAKER
+                        selection_history[idx].append(positive_idx_noitself)
+                        selection_weighst_history[idx].append(positive_sv_noitself)
 
                         # free_space to modify the weights or not
                         weights = {i: 0. for i in participate}
@@ -378,20 +381,45 @@ if __name__ == '__main__':
                         logging.critical('[Before SV Aggregation] {} Only with Accuracy {}% and Local loss {}'.format(idx, local_only_acc * 100, local_only_loss))
                         for request in participate:
                             for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
-                                # logging.info('[SV-AGG] idx({}) <-----> req({}): diff: {} * weight {}'.format(
-                                #     torch.norm(param.data.clone()), torch.norm(param_request.clone()),
-                                #     torch.norm(param_request.data.clone() - param.data.clone()), weights[request]))
-                                param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
-
+                                if whether_delta:
+                                    param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
+                                else:
+                                    param.data += param.data.clone() * weights[request]
                         sv_loss, sv_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                         logging.critical('[After SV Aggregation] New Model Local Accuracy {}% and Local Loss {}'.format(sv_acc * 100, sv_loss))
                         loss_update_acc_dict[idx].append(sv_acc)
 
+                        # MAKER
+                        after_selection_acc_history[idx].append(sv_acc)
+                        after_selection_loss_history[idx].append(sv_loss)
+
                     if active_local_loss:
+                        '''
+                        logging.info('[Fomo-Foresee] Models similarity')
+                        motivation_s2 = {i: 0. for i in range(clients)}
+                        for request in range(clients):
+                            params_diff = []
+                            tensor_diff = torch.Tensor(params_diff)
+                            for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
+                                # logging.info('[Fomo-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
+                                tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
+                            motivation_s2[request] = torch.norm(tensor_diff)
+                            # logging.critical('[Fomo-compare] Model({}) <-> Model({}): ({})'.format(idx, request, torch.norm(tensor_diff)))
+                        soretd_s2 = sorted(motivation_s2.items(), key = lambda kv:(kv[1], kv[0]))
+                        rank = 1
+                        for key, value in soretd_s2:
+                            logging.critical('[Fomo-Foresee-Usr {}] Rank {}: {}, {}'.format(idx, rank, key, value))
+                            rank += 1
+                        '''
+
                         logging.info('[Fomo] Start Loss Computation')
                         local_only_acc = local_update_acc_dict[idx][-1]
                         local_only_loss = local_update_loss_dict[idx][-1]
                         logging.info('[Fomo] {} Only with Accuracy {}% & Loss {}'.format(idx, local_only_acc * 100, local_only_loss))
+
+                        # FOR INNER RELATION
+                        before_selection_acc_history[idx].append(local_only_acc)
+                        before_selection_loss_history[idx].append(local_only_loss)
 
                         # compute probs:
                         downloaded_usrs = []
@@ -403,6 +431,8 @@ if __name__ == '__main__':
                                 downloaded_usrs.append(ch)
                         logging.critical('[Fomo] Download {} from the server'.format(downloaded_usrs))
 
+                        download_history[idx].append(downloaded_usrs)
+
                         # calculate weights
                         weights = {i: 0. for i in downloaded_usrs}
                         models_diff_dict = {i: [] for i in downloaded_usrs}
@@ -411,7 +441,7 @@ if __name__ == '__main__':
                             tensor_diff = torch.Tensor(params_diff)
                             models_diff = []
                             request_loss, request_acc = evaluate_model(usr_models[request], usr_test_loaders[idx])
-                            logging.info('[Fomo-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, request_loss))
+                            logging.info('[Fomo-EVAL] {} on {} dataset with accuracy {}% & Loss {}'.format(request, idx, request_acc * 100, local_only_loss - request_loss))
                             for param_cur, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters()):
                                 # logging.info('[Fomo-EVAL] {} <-> {}'.format(torch.norm(param_cur), torch.norm(param_request)))
                                 tensor_diff = torch.cat((tensor_diff, (param_cur - param_request).view(-1)), 0)
@@ -420,35 +450,43 @@ if __name__ == '__main__':
                             prob_download_dict[idx][request] += w
                             weights[request] = w
                             models_diff_dict[request] = models_diff
-
                         # exclude negative value, only maintain the positive weight
                         for item in downloaded_usrs:
                             weights[item] = max(0, weights[item])
                         logging.info('[Fomo] weights {}'.format(weights))
-
                         # print the positive weight and its idx of download user, the weights are not norm
+                        positive_idx = []
                         for request in downloaded_usrs:
                             if weights[request] > 0:
+                                positive_idx.append(request)
                                 logging.info('[Fomo] the client idx is {} and its positive weight is {}'.format(request, weights[request]))
+
+                        selection_history[idx].append(positive_idx if positive_idx != [] else 'Empty')
 
                         # normalize weights
                         base = sum([i for i in weights.values()])
                         if base != 0:
+                            selection_weights = []
                             for item in downloaded_usrs:
                                 weights[item] = weights[item] / base
+                            for o in positive_idx:
+                                selection_weights.append(weights[o].item())
+                            selection_weighst_history[idx].append(selection_weights)
                             logging.critical('[Fomo] weights {}'.format(weights))
                             # model aggregation to update local model
                             # local_update_model = usr_models[idx].state_dict()
                             for request in downloaded_usrs:
                                 for param, param_request in zip(usr_models[idx].parameters(), usr_models[request].parameters(),):
                                     param.data += (param_request.data.clone() - param.data.clone()) * weights[request]
+                        else:
+                            selection_weighst_history[idx].append('Empty')
                             # usr_models[idx].load_state_dict(local_update_model)
                             # loss_update_models_dict[idx].append(local_update_model)
-
                         iclar_loss, iclr_acc = evaluate_model(usr_models[idx], usr_test_loaders[idx])
                         logging.critical('[Fomo - EVAL] Fomo {} Accuracy {}% Loss {}'.format(idx, iclr_acc * 100, iclar_loss))
                         loss_update_acc_dict[idx].append(iclr_acc)
-
+                        after_selection_acc_history[idx].append(iclr_acc);
+                        after_selection_loss_history[idx].append(iclar_loss)
         if active_local_sv or active_local_loss:
             record = [loss_update_acc_dict[i][-1] for i in range(clients)]
             logging.critical('Task {} Avg Accuracy {}'.format(task, record))
@@ -458,6 +496,41 @@ if __name__ == '__main__':
             logging.critical('Task {} Avg Accuracy {}'.format(task, record))
             multi_task_avg_accuracy_list[task] = np.mean(record)
 
+        print('---------------------------')
+        print(selection_history)
+        print(selection_weighst_history)
+        print('---------------------------')
+        print(before_selection_acc_history)
+        print(after_selection_acc_history)
+        print('---------------------------')
+        print(before_selection_loss_history)
+        print(after_selection_loss_history)
+        print('---------------------------')
+
+        filter = 'sv' if active_local_sv else 'fomo'
+        writing_name_lst = ['download', 'selection', 'weights', 'before_acc_history', 'after_acc_history', 'before_loss_history', 'after_loss_history']
+        writing_lst = [download_history, selection_history, selection_weighst_history, before_selection_acc_history, after_selection_acc_history, before_selection_loss_history, after_selection_loss_history]
+        for item in range(len(writing_name_lst)):
+            with open('task{}_{}_{}.csv'.format(task, filter, writing_name_lst[item]), 'w') as f:
+                for key, value in writing_lst[item].items():
+                    if value != 'Empty':
+                        f.write('{},'.format(key))
+                        for da in value:
+                            if writing_name_lst[item] == 'selection' \
+                                    or writing_name_lst[item] == 'weights'\
+                                    or writing_name_lst[item] == 'download':
+                                if da != 'Empty':
+                                    for element in da:
+                                        f.write('{} '.format(element))
+                                    f.write(',')
+                                else:
+                                    f.write('Empty,')
+                            else:
+                                f.write('{1},'.format(key, da))
+                        f.write('\n')
+                    else:
+                        f.write('{0},{1}\n'.format(key, 'Empty'))
+        '''
         if clients % 2 == 0:
             draw_clients = clients // 2
         else:
@@ -492,6 +565,7 @@ if __name__ == '__main__':
             ax2.set_xlabel('Round')
             ax2.set_ylabel('Accuracy')
         plt.show()
+        '''
 
         if active_local_sv:
             with open('{}.csv'.format('./SV/T{}_sv_client{}_round{}_update_accuracy'.format(task, clients, global_epoch)), 'w') as f:
