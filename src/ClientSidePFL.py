@@ -72,16 +72,17 @@ if __name__ == '__main__':
     logging.info('Client Side PFL Training Starts')
 
     # todo Configs:
-    task_repeat_time = 1
+    task_repeat_time = 3
     global_epoch = 20
     local_epoch = 10
     batch_size = 40
+    classes_per_client = 2
 
     loss_repeating_val = 10
 
     # participant
-    clients = 10
-    select = 10
+    clients = 15
+    select = 15
 
     # dataset
     data = 'cifar10'
@@ -96,9 +97,9 @@ if __name__ == '__main__':
     explore = 1
 
     # todo SV for personalization
-    active_local_sv = False
+    active_local_sv = True
     sv_eval_method = 'acc'
-    whether_free_space = True
+    whether_free_space = False
     whether_delta = False
     if active_partial_download:
         R = 3 * (download + 1)
@@ -106,7 +107,7 @@ if __name__ == '__main__':
         R = 3 * clients
 
     # todo FedFomo for personalization
-    active_local_loss = True
+    active_local_loss = False
 
     multi_task_avg_accuracy_list = [0 for i in range(task_repeat_time)]
 
@@ -132,7 +133,7 @@ if __name__ == '__main__':
         # usr_optimizers = [torch.optim.Adam(usr_models[i].parameters(), lr=0.001) for i in range(clients)]
         # logging.info(usr_optimizers)
 
-        usr_dataset_loaders, usr_val_loaders, usr_test_loaders = gen_random_loaders(data, path, clients, 40, 2)
+        usr_dataset_loaders, usr_val_loaders, usr_test_loaders = gen_random_loaders(data, path, clients, batch_size, classes_per_client)
         # usr_dataset_loaders, test_loader = gen_dataloaders_with_majority(data, path, clients, 40)
         # data_loaders = gen_specific_major_loaders(data, path, clients, 40)
         logging.info('User Dataset Loader Details {}'.format(len(usr_dataset_loaders)))
@@ -373,7 +374,7 @@ if __name__ == '__main__':
                         for i in participate:
                             if i in positive_idx and i != idx:
                                 if whether_free_space:
-                                    weights[i] = free_space * positive_sv_noitself[positive_idx_noitself.index(i)]  # add free_space
+                                    weights[i] = free_space * positive_sv[positive_idx.index(i)]  # add free_space
                                 else:
                                     weights[i] = positive_sv[positive_idx.index(i)]               # not add free_space
                         logging.info('[SV] {} Allocated Weights {}'.format(idx, weights))

@@ -158,7 +158,7 @@ def gen_data_split(dataset, num_users, class_partitions):
     return user_data_idx
 
 
-def gen_random_loaders(data_name, data_path, num_users, bz, classes_per_user):
+def gen_rand_loaders(data_name, data_path, num_users, bz, classes_per_user):
     """
     generates train/val/test loaders of each client
     :param data_name: name of dataset, choose from [cifar10, cifar100]
